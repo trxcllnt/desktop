@@ -87,11 +87,11 @@ jobs:
       - task: CopyFiles@2
         inputs:
           contents: |
-            dist/*.AppImage
-            dist/*.deb
-            dist/*.rpm
-            dist/*.snap
-            dist/*.txt
+            dist/installer/*.AppImage
+            dist/installer/*.deb
+            dist/installer/*.rpm
+            dist/installer/*.snap
+            dist/installer/*.txt
           targetFolder: $(Build.ArtifactStagingDirectory)
           flattenFolders: true
         condition:
