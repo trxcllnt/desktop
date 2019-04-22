@@ -7,7 +7,7 @@ import * as crypto from 'crypto'
 import * as electronInstaller from 'electron-winstaller'
 import * as glob from 'glob'
 import * as YAML from 'yaml'
-const rimraf = require('rimraf')
+import * as temp from 'temp'
 
 import { getProductName, getCompanyName, getVersion } from '../app/package-info'
 import {
@@ -147,58 +147,168 @@ function getSha256Checksum(fullPath: string): Promise<string> {
   })
 }
 
-function throwIfError(command: string, args: string[]) {
-  const { error } = cp.spawnSync(command, args, { stdio: 'inherit' })
+function buildUsingElectronBuilder() {
+  const electronBuilder = path.resolve(
+    __dirname,
+    '..',
+    'node_modules',
+    '.bin',
+    'electron-builder'
+  )
+
+  const configPath = path.resolve(__dirname, 'electron-builder-linux.yml')
+
+  const args = [
+    'build',
+    '--prepackaged',
+    distPath,
+    '--x64',
+    '--config',
+    configPath,
+  ]
+
+  const { error } = cp.spawnSync(electronBuilder, args, {
+    stdio: 'inherit',
+  })
 
   if (error != null) {
     throw error
   }
+
+  const generatedInstallers = `${getDistRoot()}/GitHubDesktop*`
+  glob(generatedInstallers, async (error, files) => {
+    if (error != null) {
+      throw error
+    }
+
+    if (files.length === 0) {
+      throw new Error(`No installers created`)
+    }
+
+    for (const f of files) {
+      const fileName = path.basename(f)
+      const dest = path.join(outputDir, fileName)
+      console.log(`Moving ${f} -> ${dest}`)
+      await fs.move(f, dest)
+    }
+  })
 }
 
-function workaroundForSnapPackage() {
-  const distRoot = getDistRoot()
+async function buildSnapPackage(): Promise<void> {
+  const tmpDir = temp.mkdirSync('desktop-snap-package')
+  await fs.mkdirp(path.join(tmpDir, 'bin'))
+  await fs.mkdirp(path.join(tmpDir, 'snap', 'gui'))
 
-  const snapArchive = path.join(
-    distRoot,
-    `GitHubDesktop-linux-${getVersion()}.snap`
-  )
-  const snapFileSystem = path.join(distRoot, 'unsquashfs-root')
+  const arch = 'amd64'
 
-  throwIfError('unsquashfs', [
-    '-dest',
-    snapFileSystem,
-    '-no-progress',
-    snapArchive,
-  ])
-
-  const snapMetaYaml = path.join(snapFileSystem, 'meta', 'snap.yaml')
-
-  const yamlText = fs.readFileSync(snapMetaYaml, 'utf8')
-  const yaml = YAML.parse(yamlText)
-
-  // regenerate the YAML without whatever electron-builder has included for the plugs
-  // element, because a package using the strict enclosure should not define this
-  const yamlWithoutPlugs = {
-    ...yaml,
+  const yaml = {
+    name: 'github-desktop',
+    version: getVersion(),
+    summary: 'Simple collaboration from your desktop',
+    description: 'Description goes here',
+    grade: 'stable',
+    confinement: 'classic',
     apps: {
       'github-desktop': {
-        command: 'command.sh',
+        environment: {
+          TMPDIR: '$XDG_RUNTIME_DIR',
+        },
+        command: "bin/electron-launch '$SNAP/github-desktop/github-desktop'",
+      },
+    },
+    parts: {
+      'github-desktop': {
+        source: getDistPath(),
+        plugin: 'dump',
+        'stage-packages': [
+          // default Electron dependencies
+          'libnotify4',
+          'libnss3',
+          'libpcre3',
+          'libxss1',
+          'libxtst6',
+          // additional Desktop dependencies
+          'libcurl3',
+          'openssh-client',
+          'gettext',
+        ],
+        after: ['desktop-gtk3'],
       },
     },
   }
 
-  const newYaml = YAML.stringify(yamlWithoutPlugs)
-  fs.writeFileSync(snapMetaYaml, newYaml, 'utf8')
+  const snapcraftYamlText = YAML.stringify(yaml)
 
-  throwIfError('snapcraft', ['pack', snapFileSystem, '--output', snapArchive])
+  await fs.writeFile(
+    path.join(tmpDir, 'snap', 'snapcraft.yaml'),
+    snapcraftYamlText
+  )
 
-  rimraf.sync(snapFileSystem)
+  const launcherPath = path.join(tmpDir, 'bin', 'electron-launch')
+  const launcherContents = `#!/bin/sh
+
+exec "$@" --executed-from="$(pwd)" --pid=$$
+`
+
+  await fs.writeFile(launcherPath, launcherContents, { mode: 0x755 })
+
+  const desktopDesktopFile = `[Desktop Entry]
+Name=GitHub Desktop
+Exec=github-desktop %U
+Icon=$\{SNAP\}/meta/gui/icon.png
+Type=Application
+StartupNotify=true
+`
+
+  await fs.writeFile(
+    path.join(tmpDir, 'snap', 'gui', 'github-desktop.desktop'),
+    desktopDesktopFile
+  )
+
+  const sourceIconPath = path.join(
+    getDistPath(),
+    'resources',
+    'app',
+    'static',
+    'icon-logo.png'
+  )
+
+  const destinationIconPath = path.join(tmpDir, 'snap', 'gui', 'icon.png')
+  await fs.copyFile(sourceIconPath, destinationIconPath)
+
+  const { error } = cp.spawnSync('snapcraft', [`--target-arch=${arch}`], {
+    cwd: tmpDir,
+    stdio: 'inherit',
+  })
+  if (error != null) {
+    throw error
+  }
+
+  const generatedInstaller = `${tmpDir}/*.snap`
+  glob(generatedInstaller, async (error, files) => {
+    if (error != null) {
+      throw error
+    }
+
+    if (files.length !== 1) {
+      throw new Error(`Found unexpected files: ${JSON.stringify(files)}`)
+    }
+
+    const installer = files[0]
+
+    const snapArchive = path.join(
+      outputDir,
+      `GitHubDesktop-${getVersion()}-${arch}.snap`
+    )
+
+    await fs.move(installer, snapArchive)
+
+    console.log(`Installer should exist at ${snapArchive}`)
+  })
 }
 
 function generateChecksums() {
-  const distRoot = getDistRoot()
-
-  const installersPath = `${distRoot}/GitHubDesktop-linux-*`
+  const installersPath = `${outputDir}/GitHubDesktop-linux-*`
 
   glob(installersPath, async (error, files) => {
     if (error != null) {
@@ -219,39 +329,18 @@ function generateChecksums() {
       checksumsText += `${checksum} - ${fileName}\n`
     }
 
-    const checksumFile = path.join(distRoot, 'checksums.txt')
+    const checksumFile = path.join(outputDir, 'checksums.txt')
 
     fs.writeFile(checksumFile, checksumsText)
   })
 }
 
-function packageLinux() {
-  const electronBuilder = path.resolve(
-    __dirname,
-    '..',
-    'node_modules',
-    '.bin',
-    'electron-builder'
-  )
+async function packageLinux() {
+  await fs.mkdirp(outputDir)
 
-  const configPath = path.resolve(__dirname, 'electron-builder-linux.yml')
+  buildUsingElectronBuilder()
 
-  const args = [
-    'build',
-    '--prepackaged',
-    distPath,
-    '--x64',
-    '--config',
-    configPath,
-  ]
-
-  const { error } = cp.spawnSync(electronBuilder, args, { stdio: 'inherit' })
-
-  if (error != null) {
-    throw error
-  }
-
-  workaroundForSnapPackage()
+  await buildSnapPackage()
 
   generateChecksums()
 }
