@@ -9,7 +9,6 @@ import * as glob from 'glob'
 import * as YAML from 'yaml'
 import * as temp from 'temp'
 const rimraf = require('rimraf')
-
 import { getProductName, getCompanyName, getVersion } from '../app/package-info'
 import {
   getDistPath,
@@ -149,7 +148,7 @@ function getSha256Checksum(fullPath: string): Promise<string> {
   })
 }
 
-function buildUsingElectronBuilder() {
+async function buildUsingElectronBuilder(): Promise<void> {
   const electronBuilder = path.resolve(
     __dirname,
     '..',
@@ -178,22 +177,20 @@ function buildUsingElectronBuilder() {
   }
 
   const generatedInstallers = `${distRoot}/GitHubDesktop*`
-  glob(generatedInstallers, async (error, files) => {
-    if (error != null) {
-      throw error
-    }
+  console.log(`Checking for installers at ${generatedInstallers}`)
+  const files = await glob.sync(generatedInstallers)
+  if (files.length === 0) {
+    throw new Error(`No installers found at '${generatedInstallers}'`)
+  }
 
-    if (files.length === 0) {
-      throw new Error(`No installers found`)
-    }
+  for (const f of files) {
+    const fileName = path.basename(f)
+    const dest = path.join(installerDir, fileName)
+    console.log(`Moving ${f} -> ${dest}`)
+    await fs.move(f, dest, { overwrite: true })
+  }
 
-    for (const f of files) {
-      const fileName = path.basename(f)
-      const dest = path.join(installerDir, fileName)
-      console.log(`Moving ${f} -> ${dest}`)
-      await fs.move(f, dest, { overwrite: true })
-    }
-  })
+  console.log(`Done invoking electron-builder`)
 }
 
 async function buildSnapPackage(): Promise<void> {
@@ -289,29 +286,30 @@ StartupNotify=true
     cwd: tmpDir,
     stdio: 'inherit',
   })
+
   if (error != null) {
     throw error
   }
 
   const generatedInstaller = `${tmpDir}/*.snap`
-  glob(generatedInstaller, async (error, files) => {
-    if (error != null) {
-      throw error
-    }
 
-    if (files.length !== 1) {
-      throw new Error(`Found unexpected files: ${JSON.stringify(files)}`)
-    }
-
-    const installer = files[0]
-
-    const snapArchive = path.join(
-      installerDir,
-      `GitHubDesktop-${getVersion()}-${arch}.snap`
+  const files = await glob.sync(generatedInstaller)
+  if (files.length !== 1) {
+    throw new Error(
+      `Could not find installer at ${generatedInstaller}. Found these files: ${JSON.stringify(
+        files
+      )}`
     )
+  }
 
-    await fs.move(installer, snapArchive)
-  })
+  const installer = files[0]
+
+  const snapArchive = path.join(
+    installerDir,
+    `GitHubDesktop-${getVersion()}-${arch}.snap`
+  )
+
+  await fs.move(installer, snapArchive)
 }
 
 function generateChecksums() {
@@ -353,7 +351,7 @@ async function packageLinux() {
   rimraf.sync(installerDir)
   await fs.mkdirp(installerDir)
 
-  buildUsingElectronBuilder()
+  await buildUsingElectronBuilder()
 
   await buildSnapPackage()
 
