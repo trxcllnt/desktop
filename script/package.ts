@@ -23,9 +23,10 @@ import {
 } from './dist-info'
 import { isAppveyor } from './build-platforms'
 
+const distRoot = getDistRoot()
 const distPath = getDistPath()
 const productName = getProductName()
-const outputDir = path.join(distPath, '..', 'installer')
+const installerDir = path.join(distRoot, 'installer')
 
 if (process.platform === 'darwin') {
   packageOSX()
@@ -94,7 +95,7 @@ function packageWindows() {
   const options: electronInstaller.Options = {
     name: nugetPkgName,
     appDirectory: distPath,
-    outputDirectory: outputDir,
+    outputDirectory: installerDir,
     authors: getCompanyName(),
     iconUrl: iconUrl,
     setupIcon: iconSource,
@@ -119,7 +120,7 @@ function packageWindows() {
   electronInstaller
     .createWindowsInstaller(options)
     .then(() => {
-      console.log(`Installers created in ${outputDir}`)
+      console.log(`Installers created in ${installerDir}`)
       cp.execSync(`powershell ${cleanupCertificatePath}`)
     })
     .catch(e => {
@@ -176,21 +177,21 @@ function buildUsingElectronBuilder() {
     throw error
   }
 
-  const generatedInstallers = `${getDistRoot()}/GitHubDesktop*`
+  const generatedInstallers = `${distRoot}/GitHubDesktop*`
   glob(generatedInstallers, async (error, files) => {
     if (error != null) {
       throw error
     }
 
     if (files.length === 0) {
-      throw new Error(`No installers created`)
+      throw new Error(`No installers found`)
     }
 
     for (const f of files) {
       const fileName = path.basename(f)
-      const dest = path.join(outputDir, fileName)
+      const dest = path.join(installerDir, fileName)
       console.log(`Moving ${f} -> ${dest}`)
-      await fs.move(f, dest)
+      await fs.move(f, dest, { overwrite: true })
     }
   })
 }
@@ -305,7 +306,7 @@ StartupNotify=true
     const installer = files[0]
 
     const snapArchive = path.join(
-      outputDir,
+      installerDir,
       `GitHubDesktop-${getVersion()}-${arch}.snap`
     )
 
@@ -314,16 +315,19 @@ StartupNotify=true
 }
 
 function generateChecksums() {
-  const installersPath = `${outputDir}/GitHubDesktop-*`
+  const repositoryRoot = path.dirname(distRoot)
+  const installersPath = `${installerDir}/GitHubDesktop*`
 
   glob(installersPath, async (error, files) => {
     if (error != null) {
       throw error
     }
 
+    if (files.length === 0) {
+      throw new Error(`Could not find any files at ${installersPath}`)
+    }
+
     const checksums = new Map<string, string>()
-    const distRoot = getDistRoot()
-    const repositoryRoot = path.basename(distRoot)
 
     for (const f of files) {
       const relativePath = path.relative(repositoryRoot, f)
@@ -339,15 +343,15 @@ function generateChecksums() {
       checksumsText += `${checksum} - ${fileName}\n`
     }
 
-    const checksumFile = path.join(outputDir, 'checksums.txt')
+    const checksumFile = path.join(installerDir, 'checksums.txt')
 
     fs.writeFile(checksumFile, checksumsText)
   })
 }
 
 async function packageLinux() {
-  rimraf.sync(outputDir)
-  await fs.mkdirp(outputDir)
+  rimraf.sync(installerDir)
+  await fs.mkdirp(installerDir)
 
   buildUsingElectronBuilder()
 
