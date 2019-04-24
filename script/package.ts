@@ -8,6 +8,7 @@ import * as electronInstaller from 'electron-winstaller'
 import * as glob from 'glob'
 import * as YAML from 'yaml'
 import * as temp from 'temp'
+const rimraf = require('rimraf')
 
 import { getProductName, getCompanyName, getVersion } from '../app/package-info'
 import {
@@ -309,13 +310,11 @@ StartupNotify=true
     )
 
     await fs.move(installer, snapArchive)
-
-    console.log(`Installer should exist at ${snapArchive}`)
   })
 }
 
 function generateChecksums() {
-  const installersPath = `${outputDir}/GitHubDesktop-linux-*`
+  const installersPath = `${outputDir}/GitHubDesktop-*`
 
   glob(installersPath, async (error, files) => {
     if (error != null) {
@@ -323,8 +322,12 @@ function generateChecksums() {
     }
 
     const checksums = new Map<string, string>()
+    const distRoot = getDistRoot()
+    const repositoryRoot = path.basename(distRoot)
 
     for (const f of files) {
+      const relativePath = path.relative(repositoryRoot, f)
+      console.log(`Found installer: '${relativePath}'`)
       const checksum = await getSha256Checksum(f)
       checksums.set(f, checksum)
     }
@@ -343,6 +346,7 @@ function generateChecksums() {
 }
 
 async function packageLinux() {
+  rimraf.sync(outputDir)
   await fs.mkdirp(outputDir)
 
   buildUsingElectronBuilder()
