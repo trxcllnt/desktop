@@ -195,8 +195,13 @@ function buildUsingElectronBuilder() {
 }
 
 async function buildSnapPackage(): Promise<void> {
+  const distPath = getDistPath()
+
   const tmpDir = temp.mkdirSync('desktop-snap-package')
-  await fs.mkdirp(path.join(tmpDir, 'bin'))
+
+  // TODO: create this as a temporary directory rather than within the distribution
+
+  await fs.mkdirp(path.join(distPath, 'bin'))
   await fs.mkdirp(path.join(tmpDir, 'snap', 'gui'))
 
   const arch = 'amd64'
@@ -218,7 +223,7 @@ async function buildSnapPackage(): Promise<void> {
     },
     parts: {
       'github-desktop': {
-        source: getDistPath(),
+        source: distPath,
         plugin: 'dump',
         'stage-packages': [
           // default Electron dependencies
@@ -244,7 +249,9 @@ async function buildSnapPackage(): Promise<void> {
     snapcraftYamlText
   )
 
-  const launcherPath = path.join(tmpDir, 'bin', 'electron-launch')
+  // TODO: not copy this file into the distribution directory
+
+  const launcherPath = path.join(distPath, 'bin', 'electron-launch')
   const launcherContents = `#!/bin/sh
 
 exec "$@" --executed-from="$(pwd)" --pid=$$
