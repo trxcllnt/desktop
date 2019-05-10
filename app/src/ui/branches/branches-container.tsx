@@ -21,6 +21,7 @@ import { PullRequestList } from './pull-request-list'
 import { IBranchListItem } from './group-branches'
 import { renderDefaultBranch } from './branch-renderer'
 import { IMatches } from '../../lib/fuzzy-find'
+import { startTimer } from '../lib/timing'
 
 interface IBranchesContainerProps {
   readonly dispatcher: Dispatcher
@@ -232,13 +233,18 @@ export class BranchesContainer extends React.Component<
     })
   }
 
-  private onBranchItemClick = (branch: Branch) => {
+  private onBranchItemClick = async (branch: Branch) => {
     this.props.dispatcher.closeFoldout(FoldoutType.Branch)
 
     const currentBranch = this.props.currentBranch
 
     if (currentBranch == null || currentBranch.name !== branch.name) {
-      this.props.dispatcher.checkoutBranch(this.props.repository, branch)
+      const timer = startTimer(
+        'checkout branch from list',
+        this.props.repository
+      )
+      await this.props.dispatcher.checkoutBranch(this.props.repository, branch)
+      timer.done()
     }
   }
 
@@ -278,12 +284,17 @@ export class BranchesContainer extends React.Component<
     this.props.dispatcher.createPullRequest(this.props.repository)
   }
 
-  private onPullRequestClicked = (pullRequest: PullRequest) => {
+  private onPullRequestClicked = async (pullRequest: PullRequest) => {
     this.props.dispatcher.closeFoldout(FoldoutType.Branch)
-    this.props.dispatcher.checkoutPullRequest(
+    const timer = startTimer(
+      'checkout pull request from list',
+      this.props.repository
+    )
+    await this.props.dispatcher.checkoutPullRequest(
       this.props.repository,
       pullRequest
     )
+    timer.done()
 
     this.onPullRequestSelectionChanged(pullRequest)
   }
