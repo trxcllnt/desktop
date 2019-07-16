@@ -1,4 +1,3 @@
-# FROM snapcore/snapcraft
 FROM ubuntu:xenial
 
 # Grab dependencies
@@ -53,6 +52,5 @@ RUN apt -qq install --yes \
   # needed for RPM builds
   rpm \
   # needed for deb builds using fpm
-  binutils \
-  # needed for tweaking Snap output post-packaging
-  squashfs-tools
+  binutils
+ 
